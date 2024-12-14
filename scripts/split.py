@@ -1,0 +1,18 @@
+from PIL import Image
+import os
+
+# Load the animated GIF
+gif_path = "./images/boss.gif"
+output_dir = "./images/"
+gif = Image.open(gif_path)
+
+# Extract and save frames
+frame_count = 0
+while True:
+    frame_path = os.path.join(output_dir, f"boss_frame_{frame_count}.png")
+    gif.save(frame_path)
+    frame_count += 1
+    try:
+        gif.seek(frame_count)  # Move to the next frame
+    except EOFError:
+        break  # No more frames
