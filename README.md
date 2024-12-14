@@ -31,7 +31,7 @@ git pull
 ```
 
 
-## 🕹️ How to Play
+## 🕹️ Get started
 1. **Run the Game**: Start the game with the following command:
    ```bash
    python scripts/main.py
