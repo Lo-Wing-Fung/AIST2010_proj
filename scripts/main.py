@@ -55,10 +55,6 @@ COLOR_LIST_INACTIVE = (143, 238, 255)
 COLOR_LIST_ACTIVE = (194, 246, 255)
 
 
-# Load background images
-home_bg = pygame.image.load("./background/home_bg.png")
-drip_bg = pygame.image.load("./images/mywar_bg.png")
-
 # Load bullet images
 player_bullet_img = pygame.image.load("./images/bullet_blue.png")
 boss_bullet_img = pygame.image.load("./images/bullet_orange.png")
@@ -75,7 +71,7 @@ heart_empty = pygame.transform.scale(heart_empty, heart_size)
 home_bg_music = "./background/home_bg.wav"
 
 # Define player
-player_size = 20
+player_size = 40
 player_pos = [WIDTH // 2, HEIGHT - player_size * 2]
 player_speed = 6
 player_velocity = [0, 0]  # Velocity vector
@@ -114,10 +110,8 @@ clock = pygame.time.Clock()
 
 Drop = True
 
-boss_frames = None
+boss_frames, player_image, home_bg, drip_bg = None, None, None, None
 theme_selected = "touhou"
-
-
 
 
 class DropDown:
@@ -230,21 +224,17 @@ def draw_end_page(message):
 
 
 def change_theme():
-    global boss_frames
+    global boss_frames, player_image, home_bg, drip_bg
 
-    if theme_selected == "touhou":
-        boss_frames = [
-            pygame.transform.scale(pygame.image.load(f"./themes/touhou_boss_frame_{i}.png"), (boss_size, boss_size))
-            for i in range(4)  # Assuming 4 frames: boss_frame_0.png to boss_frame_3.png
-        ]
-    elif theme_selected == "mario":
-        pass
+    boss_frames = [
+        pygame.transform.scale(pygame.image.load(f"./themes/{theme_selected}/{theme_selected}_boss_frame_{i}.png"), (boss_size, boss_size))
+        for i in range(4)  # Assuming 4 frames: boss_frame_0.png to boss_frame_3.png
+    ]
+    player_image = pygame.image.load(f"./themes/{theme_selected}/{theme_selected}_player.png")  # Replace with your player image path
+    player_image = pygame.transform.scale(player_image, (player_size, player_size))  # Scale the image to match player size
 
-    elif theme_selected == "pixel":
-        pass
-
-    elif theme_selected == "pacman":
-        pass
+    home_bg = pygame.image.load(f"./themes/{theme_selected}/{theme_selected}_home_bg.png")
+    drip_bg = pygame.image.load(f"./themes/{theme_selected}/{theme_selected}_bg.png")
 
 
 def show_theme_selection():
@@ -255,7 +245,7 @@ def show_theme_selection():
 
     # Define theme images and their positions
     themes = ["mario", "touhou", "pixel", "pacman"]
-    theme_images = [f"./themes/{theme}.png" for theme in themes]  # Replace with your image paths
+    theme_images = [f"./themes/{theme}/{theme}.png" for theme in themes]  # Replace with your image paths
     theme_buttons = []
     theme_selected = None
 
@@ -354,7 +344,7 @@ def draw_start_page():
     # Draw theme icon (optional, replace with a theme icon if needed)
     
     
-    image = pygame.image.load(f"./themes/{theme_selected}.png")
+    image = pygame.image.load(f"./themes/{theme_selected}/{theme_selected}.png")
     scaled_image = pygame.transform.scale(image, (40, 40))  # Resize images
     theme_button_rect = pygame.Rect(WIDTH - 60, 20, 40, 40)
 
@@ -578,7 +568,6 @@ def start_menu():
                         print(f"Theme changed to: {selected_theme}")
 
 
-
 # Function to reset the game state
 def reset_game():
     global score, bullets, enemy_bullets, player_pos, player_velocity
@@ -609,7 +598,7 @@ def end_game(message):
 
 # Game-related functions
 def draw_player():
-    pygame.draw.rect(screen, WHITE, (player_pos[0], player_pos[1], player_size, player_size))
+    screen.blit(player_image, (player_pos[0], player_pos[1]))
 
 
 def draw_boss():
@@ -840,7 +829,10 @@ def main():
         draw_enemy_bullets()
 
         # Show score and lives
-        score_text = font_arcade.render(f"HP {boss_health}", True, BLACK)
+        if theme_selected == "pacman" or theme_selected == "pixel":
+            score_text = font_arcade.render(f"HP {boss_health}", True, WHITE)
+        else:
+            score_text = font_arcade.render(f"HP {boss_health}", True, BLACK)
         screen.blit(score_text, (10, 10))
         draw_lives()
 
