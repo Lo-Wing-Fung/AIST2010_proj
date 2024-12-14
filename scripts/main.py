@@ -1,9 +1,20 @@
+import tkinter
+import tkinter.filedialog
 import pygame
 import sys
 import random
 import math
+import time
+import os
+import shutil
+from natsort import natsorted
 from visual import SpectrumVisualizer
 from AudioAnalyzer import AudioAnalyzer
+
+
+# avoid collision (in mac)
+top = tkinter.Tk()
+top.withdraw()  # hide window
 
 # Initialize Pygame
 pygame.init()
@@ -11,21 +22,20 @@ pygame.mixer.init()  # Initialize mixer for sound
 
 # Define constants
 WIDTH, HEIGHT = 480, 640
-FPS = 60
-font_arcade = pygame.font.Font('./fonts/arcade.TTF', 44)
+FPS = 100
+font_arcade = pygame.font.Font('./fonts/arcade_new.TTF', 30)
+font_arcade_mid = pygame.font.Font('./fonts/arcade_new.TTF', 20)
+font_arcade_small = pygame.font.Font('./fonts/arcade_new.TTF', 10)
+
 
 # Create game window
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("TATAKAE")
 
-# Initialize spectrum visualizer
-visualizer = SpectrumVisualizer("./music/mywar.wav")
-
-# Initialize audio analyzer
 freq_groups = [[30], [70], [100]]  # Define frequency groups (Hz)
-audio_analyzer = AudioAnalyzer()
-audio_analyzer.load("./music/mywar.wav")
-audio_analyzer.precompute(freq_groups, output_file="./precomputed/precomputed_data.npy")
+
+
+visualizer, audio_analyzer, game_bg_music, difficulty = None, None, None, None
 
 # Add rhythm-based bullet generation
 bass_trigger = -30  # Decibel level threshold
@@ -39,9 +49,14 @@ RED = (255, 0, 0)
 BLUE = (0, 0, 255)
 GREEN = (0, 255, 0)
 
+COLOR_INACTIVE = (100, 80, 255)
+COLOR_ACTIVE = (100, 200, 255)
+COLOR_LIST_INACTIVE = (143, 238, 255)
+COLOR_LIST_ACTIVE = (194, 246, 255)
+
 
 # Load background images
-home_bg = pygame.image.load("./images/home_bg.png")
+home_bg = pygame.image.load("./background/home_bg.png")
 drip_bg = pygame.image.load("./images/mywar_bg.png")
 
 # Load bullet images
@@ -57,8 +72,7 @@ heart_empty = pygame.transform.scale(heart_empty, heart_size)
 
 
 # Load background music for home and game
-home_bg_music = "./music/home_bg.wav"
-game_bg_music = "./music/mywar.wav"
+home_bg_music = "./background/home_bg.wav"
 
 # Define player
 player_size = 20
@@ -68,10 +82,8 @@ player_velocity = [0, 0]  # Velocity vector
 
 # Define boss animation frames
 boss_size = 150
-boss_frames = [
-    pygame.transform.scale(pygame.image.load(f"./images/boss_frame_{i}.png"), (boss_size, boss_size))
-    for i in range(4)  # Assuming 4 frames: boss_frame_0.png to boss_frame_3.png
-]
+
+
 boss_frame_index = 0
 boss_frame_timer = 0  # Timer to control frame switching
 boss_frame_interval = 200  # Milliseconds between frame switches
@@ -102,13 +114,108 @@ clock = pygame.time.Clock()
 
 Drop = True
 
+boss_frames = None
+theme_selected = "touhou"
+
+
+
+
+class DropDown:
+    def __init__(self, color_menu, color_option, x, y, w, h, font, main, options):
+        self.color_menu = color_menu
+        self.color_option = color_option
+        self.rect = pygame.Rect(x, y, w, h)  # Main dropdown rectangle
+        self.font = font
+        self.main = main  # Main button text
+        self.options = options  # Dropdown options
+        self.draw_menu = False  # Flag to determine if the menu is open
+        self.menu_active = False  # Highlight state for the main dropdown button
+        self.active_option = -1  # Highlighted option in the dropdown menu
+
+    def draw(self, surf):
+        # Draw the main dropdown button
+        pygame.draw.rect(surf, self.color_menu[self.menu_active], self.rect, 0)
+        msg = self.font.render(self.main, True, (0, 0, 0))
+        surf.blit(msg, msg.get_rect(center=self.rect.center))
+
+        # Draw the dropdown menu if open
+        if self.draw_menu:
+            for i, text in enumerate(self.options):
+                rect = self.rect.copy()
+                rect.y += (i + 1) * self.rect.height
+                pygame.draw.rect(surf, self.color_option[1 if i == self.active_option else 0], rect, 0)
+                msg = self.font.render(text, True, (0, 0, 0))
+                surf.blit(msg, msg.get_rect(center=rect.center))
+
+    def update(self, event_list):
+        mpos = pygame.mouse.get_pos()  # Get mouse position
+        self.menu_active = self.rect.collidepoint(mpos)  # Check if mouse is over the main dropdown button
+
+        # Highlight the active option in the dropdown menu
+        self.active_option = -1
+        for i in range(len(self.options)):
+            rect = self.rect.copy()
+            rect.y += (i + 1) * self.rect.height
+            if rect.collidepoint(mpos):
+                self.active_option = i
+                break
+
+        # Close the dropdown menu if the mouse is not over the button or menu
+        if not self.menu_active and self.active_option == -1:
+            self.draw_menu = False
+            
+
+        # Handle events
+        for event in event_list:
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # Left mouse button click
+                if self.menu_active:  # Toggle menu if main button is clicked
+                    self.draw_menu = not self.draw_menu
+                elif self.draw_menu and self.active_option >= 0:  # Select an option
+                    self.draw_menu = False
+                    return self.active_option  # Return the selected option
+        return -1
+
+
+def song_preprocess(default="mywar.wav", diff="Easy"):
+    global visualizer, audio_analyzer, game_bg_music, difficulty
+    visualizer, audio_analyzer, game_bg_music, difficulty = None, None, None, None
+
+    global FPS, lives, boss_health
+    FPS, lives, boss_health = None, None, None
+
+    if diff == "Easy":
+        FPS = 60
+        lives = 5
+        boss_health = 50
+
+    elif diff == "Medium":
+        FPS = 100
+        lives = 3
+        boss_health = 100
+
+    elif diff == "Hard":
+        FPS = 200
+        lives = 1
+        boss_health = 200
+
+    # Initialize spectrum visualizer
+    visualizer = SpectrumVisualizer(f"./music/{default}")
+
+    # Initialize audio analyzer
+    audio_analyzer = AudioAnalyzer()
+    audio_analyzer.load(f"./music/{default}")
+    audio_analyzer.precompute(freq_groups, f"./precomputed/{default.replace('.wav', '.npy')}")
+
+    game_bg_music = f"./music/{default}"
+    difficulty = diff
+
 
 def draw_end_page(message):
     """Draw the end page with a return to home button."""
     screen.fill(BLACK)
 
     message_text = font_arcade.render(message, True, WHITE)
-    button_text = font_arcade.render("Return", True, WHITE)
+    button_text = font_arcade_mid.render("Return Home", True, WHITE)
 
     # Position text
     message_rect = message_text.get_rect(center=(WIDTH // 2, HEIGHT // 3))
@@ -122,30 +229,282 @@ def draw_end_page(message):
     return button_rect
 
 
+def change_theme():
+    global boss_frames
+
+    if theme_selected == "touhou":
+        boss_frames = [
+            pygame.transform.scale(pygame.image.load(f"./themes/touhou_boss_frame_{i}.png"), (boss_size, boss_size))
+            for i in range(4)  # Assuming 4 frames: boss_frame_0.png to boss_frame_3.png
+        ]
+    elif theme_selected == "mario":
+        pass
+
+    elif theme_selected == "pixel":
+        pass
+
+    elif theme_selected == "pacman":
+        pass
+
+
+def show_theme_selection():
+    """Display a confirmation window to select a theme."""
+    global theme_selected
+    popup_width, popup_height = 400, 300
+    popup_rect = pygame.Rect((WIDTH - popup_width) // 2, (HEIGHT - popup_height) // 2, popup_width, popup_height)
+
+    # Define theme images and their positions
+    themes = ["mario", "touhou", "pixel", "pacman"]
+    theme_images = [f"./themes/{theme}.png" for theme in themes]  # Replace with your image paths
+    theme_buttons = []
+    theme_selected = None
+
+    # Load theme images
+    for i, theme_image_path in enumerate(theme_images):
+        image = pygame.image.load(theme_image_path)
+        scaled_image = pygame.transform.scale(image, (50, 50))  # Resize images
+        x = popup_rect.x + 40 + i * 90                             
+        y = popup_rect.y + 100
+        rect = pygame.Rect(x, y, 50, 50)
+        theme_buttons.append((scaled_image, rect, themes[i]))
+
+    # Confirm and Return buttons
+    confirm_rect = pygame.Rect(popup_rect.centerx - 170, popup_rect.bottom - 60, 150, 40)
+    return_rect = pygame.Rect(popup_rect.centerx + 20, popup_rect.bottom - 60, 150, 40)
+
+    while True:
+        event_list = pygame.event.get()
+        for event in event_list:
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # Check if any theme button is clicked
+                for _, rect, theme in theme_buttons:
+                    if rect.collidepoint(event.pos):
+                        theme_selected = theme  # Highlight selected theme
+                if confirm_rect.collidepoint(event.pos) and theme_selected:
+                    print(f"Theme confirmed: {theme_selected}")
+                    # Apply theme logic here, e.g., change images or colors
+                    change_theme()
+                    return theme_selected
+                elif return_rect.collidepoint(event.pos):
+                    return None  # Return without making changes
+
+        # Draw popup
+        pygame.draw.rect(screen, BLACK, popup_rect)
+        pygame.draw.rect(screen, WHITE, popup_rect, 5)  # Border
+
+        title_text = font_arcade.render("Theme", True, WHITE)
+        screen.blit(title_text, title_text.get_rect(center=(popup_rect.centerx, popup_rect.y + 30)))
+
+        # Draw theme buttons and highlight selected theme
+        for image, rect, theme in theme_buttons:
+            screen.blit(image, rect)
+            if theme_selected == theme:
+                pygame.draw.rect(screen, GREEN, rect, 3)  # Highlight selected theme
+
+        # If a theme is selected, display its name below all icons
+        if theme_selected:
+            theme_name_text = font_arcade_mid.render(theme_selected.capitalize(), True, WHITE)
+            screen.blit(theme_name_text, theme_name_text.get_rect(center=(popup_rect.centerx, popup_rect.y + 200)))
+
+        # Draw Confirm and Return buttons
+        pygame.draw.rect(screen, GREEN, confirm_rect)
+        pygame.draw.rect(screen, RED, return_rect)
+        confirm_text = font_arcade_mid.render("Confirm", True, WHITE)
+        return_text = font_arcade_mid.render("Return", True, WHITE)
+        screen.blit(confirm_text, confirm_text.get_rect(center=confirm_rect.center))
+        screen.blit(return_text, return_text.get_rect(center=return_rect.center))
+
+        pygame.display.flip()
+
+
 def draw_start_page():
-    """Draw the start page with Start and Quit buttons."""
+    """Draw the start page with Start, Upload, Quit, and Theme buttons."""
+    global boss_frames
     home_bg_size = (WIDTH, HEIGHT)
     home_bg_t = pygame.transform.scale(home_bg, home_bg_size)
     screen.blit(home_bg_t, (0, 0))
 
-
     title_text = font_arcade.render("TATAKAE!!", True, WHITE)
-    start_text = font_arcade.render("Start", True, WHITE)
-    quit_text = font_arcade.render("Quit", True, WHITE)
+    start_text = font_arcade_mid.render("Start", True, WHITE)
+    upload_text = font_arcade_mid.render("Upload", True, WHITE)
+    quit_text = font_arcade_mid.render("Quit", True, WHITE)
+
+    # Theme button
+    # theme_button_rect = pygame.Rect(WIDTH - 60, 20, 40, 40)  # Square button at the top-right corner
 
     # Position text
     title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 3))
     start_rect = pygame.Rect(WIDTH // 2 - 75, HEIGHT // 2 - 25, 150, 50)
-    quit_rect = pygame.Rect(WIDTH // 2 - 75, HEIGHT // 2 + 50, 150, 50)
+    upload_rect = pygame.Rect(WIDTH // 2 - 75, HEIGHT // 2 + 50, 150, 50)
+    quit_rect = pygame.Rect(WIDTH // 2 - 75, HEIGHT // 2 + 125, 150, 50)
 
     # Draw elements
     screen.blit(title_text, title_rect)
     pygame.draw.rect(screen, BLUE, start_rect)
+    pygame.draw.rect(screen, GREEN, upload_rect)
     pygame.draw.rect(screen, RED, quit_rect)
+    # pygame.draw.rect(screen, (255, 255, 0), theme_button_rect)  # Yellow square for theme button
     screen.blit(start_text, start_text.get_rect(center=start_rect.center))
+    screen.blit(upload_text, upload_text.get_rect(center=upload_rect.center))
     screen.blit(quit_text, quit_text.get_rect(center=quit_rect.center))
 
-    return start_rect, quit_rect
+    # Draw theme icon (optional, replace with a theme icon if needed)
+    
+    
+    image = pygame.image.load(f"./themes/{theme_selected}.png")
+    scaled_image = pygame.transform.scale(image, (40, 40))  # Resize images
+    theme_button_rect = pygame.Rect(WIDTH - 60, 20, 40, 40)
+
+    screen.blit(scaled_image, theme_button_rect)
+    
+
+    return start_rect, upload_rect, quit_rect, theme_button_rect
+
+
+def show_start_confirmation():
+    """Show a confirmation pop-up with two dropdowns to select the game mode and difficulty."""
+    popup_width, popup_height = 400, HEIGHT
+    popup_rect = pygame.Rect((WIDTH - popup_width) // 2, (HEIGHT - popup_height) // 2, popup_width, popup_height)
+
+    yes_rect = pygame.Rect(popup_rect.centerx - 170, popup_rect.bottom - 60, 150, 40)
+    no_rect = pygame.Rect(popup_rect.centerx + 20, popup_rect.bottom - 60, 150, 40)
+
+    songs = natsorted(os.listdir("./music"))
+
+    # Create two dropdowns: one for game mode and one for difficulty
+    dropdown_mode = DropDown(
+        [COLOR_INACTIVE, COLOR_ACTIVE],
+        [COLOR_LIST_INACTIVE, COLOR_LIST_ACTIVE],
+        popup_rect.x + 50, popup_rect.y + 100, 300, 40,
+        font_arcade_mid, "Select Song", songs
+    )
+
+    dropdown_difficulty = DropDown(
+        [COLOR_INACTIVE, COLOR_ACTIVE],
+        [COLOR_LIST_INACTIVE, COLOR_LIST_ACTIVE],
+        popup_rect.x + 50, popup_rect.y + 160, 300, 40,
+        font_arcade_mid, "Select Mode", ["Easy", "Medium", "Hard"]
+    )
+
+    selected_mode = None
+    selected_difficulty = None
+
+    while True:
+        event_list = pygame.event.get()
+
+        # Update both dropdowns and capture their selections
+        mode_option = dropdown_mode.update(event_list)
+        if mode_option >= 0:
+            dropdown_mode.main = dropdown_mode.options[mode_option]
+            selected_mode = dropdown_mode.main
+            print(f"Selected mode: {selected_mode}")
+
+        difficulty_option = dropdown_difficulty.update(event_list)
+        if difficulty_option >= 0:
+            dropdown_difficulty.main = dropdown_difficulty.options[difficulty_option]
+            selected_difficulty = dropdown_difficulty.main
+            print(f"Selected difficulty: {selected_difficulty}")
+
+        for event in event_list:
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if yes_rect.collidepoint(event.pos):  # Confirm selections
+                    print(f"Game started with mode: {selected_mode}, difficulty: {selected_difficulty}")
+                    return selected_mode, selected_difficulty
+                elif no_rect.collidepoint(event.pos):  # Return to start page
+                    return None, None
+
+        # Draw the popup
+        pygame.draw.rect(screen, BLACK, popup_rect)
+        pygame.draw.rect(screen, WHITE, popup_rect, 5)  # Border
+
+        title_text = font_arcade_mid.render("Game Settings", True, WHITE)
+        screen.blit(title_text, title_text.get_rect(center=(popup_rect.centerx, popup_rect.y + 50)))
+
+        pygame.draw.rect(screen, GREEN, yes_rect)
+        pygame.draw.rect(screen, RED, no_rect)
+
+        yes_text = font_arcade_mid.render("Start", True, WHITE)
+        no_text = font_arcade_mid.render("Return", True, WHITE)
+
+        screen.blit(yes_text, yes_text.get_rect(center=yes_rect.center))
+        screen.blit(no_text, no_text.get_rect(center=no_rect.center))
+
+        # Check which dropdown is open and draw its menu last
+        if dropdown_mode.draw_menu:
+            dropdown_difficulty.draw(screen)  # Draw the lower dropdown first
+            dropdown_mode.draw(screen)  # Draw the upper dropdown on top
+        else:
+            dropdown_mode.draw(screen)  # Draw the upper dropdown first
+            dropdown_difficulty.draw(screen)  # Draw the lower dropdown on top
+
+        pygame.display.flip()
+
+
+def upload_preprocessing(file_name):
+    global visualizer, audio_analyzer
+
+    base = os.path.basename(file_name)
+    shutil.copyfile(file_name, f"./music/{base}")
+    print("uploaded.")
+
+    # Initialize spectrum visualizer
+    visualizer = SpectrumVisualizer(f"./music/{base}")
+
+    # Initialize audio analyzer
+    audio_analyzer = AudioAnalyzer()
+    audio_analyzer.load(f"./music/{base}")
+    audio_analyzer.precompute(freq_groups, output_file=f"./precomputed/{(base.split('.'))[0]}.npy")
+    print("preprocessed.")
+
+
+def show_upload_confirmation():
+    """Show a confirmation pop-up to ask if the player wants to upload."""
+    popup_width, popup_height = 400, 150
+    popup_rect = pygame.Rect((WIDTH - popup_width) // 2, (HEIGHT - popup_height) // 2, popup_width, popup_height)
+
+    yes_rect = pygame.Rect(popup_rect.centerx - 170, popup_rect.bottom - 60, 150, 40)
+    no_rect = pygame.Rect(popup_rect.centerx + 20, popup_rect.bottom - 60, 150, 40)
+
+    file_name = None
+
+    while True:
+        pygame.draw.rect(screen, BLACK, popup_rect)
+        pygame.draw.rect(screen, WHITE, popup_rect, 5)  # Border
+
+        yes_text = font_arcade_mid.render("Upload", True, WHITE)
+        no_text = font_arcade_mid.render("Return", True, WHITE)
+            
+        if file_name:
+            base = os.path.basename(file_name)
+            message_text = font_arcade_small.render(f"File uploaded: {base}", True, WHITE)
+            screen.blit(message_text, message_text.get_rect(center=(popup_rect.centerx, popup_rect.centery - 20)))
+
+
+        pygame.draw.rect(screen, GREEN, yes_rect)
+        pygame.draw.rect(screen, RED, no_rect)
+        screen.blit(yes_text, yes_text.get_rect(center=yes_rect.center))
+        screen.blit(no_text, no_text.get_rect(center=no_rect.center))
+
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if yes_rect.collidepoint(event.pos):  
+                    file_name = tkinter.filedialog.askopenfilename()
+                    top.withdraw()
+                    upload_preprocessing(file_name)    # move to music folder and precompute
+
+                elif no_rect.collidepoint(event.pos):  # Return to start page
+                    return
 
 
 def show_quit_confirmation():
@@ -160,9 +519,9 @@ def show_quit_confirmation():
         pygame.draw.rect(screen, BLACK, popup_rect)
         pygame.draw.rect(screen, WHITE, popup_rect, 5)  # Border
 
-        message_text = font_arcade.render("Sure ma", True, WHITE)
-        yes_text = font_arcade.render("Yes", True, WHITE)
-        no_text = font_arcade.render("No", True, WHITE)
+        message_text = font_arcade.render("Sure?", True, WHITE)
+        yes_text = font_arcade_mid.render("Yes", True, WHITE)
+        no_text = font_arcade_mid.render("No", True, WHITE)
 
         screen.blit(message_text, message_text.get_rect(center=(popup_rect.centerx, popup_rect.centery - 20)))
         pygame.draw.rect(screen, GREEN, yes_rect)
@@ -185,12 +544,15 @@ def show_quit_confirmation():
 
 
 def start_menu():
-    """Display the start menu with Start and Quit buttons."""
+    """Display the start menu with Start, Upload, Quit, and Theme buttons."""
     pygame.mixer.music.load(home_bg_music)  # Load home background music
     pygame.mixer.music.play(-1)  # Play in a loop
 
     while True:
-        start_button_rect, quit_button_rect = draw_start_page()
+        if not pygame.mixer.music.get_busy():
+            pygame.mixer.music.play(-1)  # Play home music if stopped
+
+        start_button_rect, upload_button_rect, quit_button_rect, theme_button_rect = draw_start_page()
         pygame.display.flip()  # Update the display
 
         for event in pygame.event.get():
@@ -199,20 +561,27 @@ def start_menu():
                 sys.exit()
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if start_button_rect.collidepoint(event.pos):  # If Start button clicked
-                    pygame.mixer.music.stop()  # Stop home music
-                    pygame.mixer.music.load(game_bg_music)
-                    pygame.mixer.music.play(-1)  # Play indefinitely
-
-                    return  # Exit the start menu
+                    selected_song, selected_difficulty = show_start_confirmation()
+                    if selected_song and selected_difficulty:
+                        song_preprocess(selected_song, selected_difficulty)
+                        pygame.mixer.music.stop()
+                        pygame.mixer.music.load(game_bg_music)
+                        pygame.mixer.music.play(-1)
+                        return  # Exit the start menu
+                elif upload_button_rect.collidepoint(event.pos):  # If Upload button clicked
+                    show_upload_confirmation()
                 elif quit_button_rect.collidepoint(event.pos):  # If Quit button clicked
-                    show_quit_confirmation()  # Show confirmation dialog
+                    show_quit_confirmation()
+                elif theme_button_rect.collidepoint(event.pos):  # If Theme button clicked
+                    selected_theme = show_theme_selection()
+                    if selected_theme:
+                        print(f"Theme changed to: {selected_theme}")
+
 
 
 # Function to reset the game state
 def reset_game():
-    global boss_health, lives, score, bullets, enemy_bullets, player_pos, player_velocity
-    boss_health = 50
-    lives = 5
+    global score, bullets, enemy_bullets, player_pos, player_velocity
     score = 0
     bullets = []
     enemy_bullets = []
@@ -252,6 +621,7 @@ def draw_boss():
         boss_frame_timer = current_time
     # Draw the current frame
     screen.blit(boss_frames[boss_frame_index], (boss_pos[0], boss_pos[1]))
+
 
 def generate_rhythm_based_bullets():
     global last_bass_shot_time, Drop
@@ -385,23 +755,27 @@ def check_enemy_bullet_collision():
                 end_game("Game Over!")  # Show the Game Over screen
 
 
-
 def draw_lives():
-    for i in range(5):
-        x_pos = WIDTH - (i + 1) * (heart_size[0] + 5)  # Calculate x-position for hearts
+    l = {"Easy": 5, "Medium": 3, "Hard": 1}
+
+    for i in range(l[difficulty]):
+        x_pos = WIDTH - (i + 1) * (heart_size[0] + l[difficulty])  # Calculate x-position for hearts
         y_pos = 10  # Fixed y-position
-        if i < (5 - lives):  # Empty hearts appear from the rightmost
+        if i < (l[difficulty] - lives):  # Empty hearts appear from the rightmost
             screen.blit(heart_empty, (x_pos, y_pos))  # Draw empty hearts
         else:
             screen.blit(heart_filled, (x_pos, y_pos))  # Draw filled hearts
 
 
 def main():
+    change_theme()
+
     # Run the start menu
     start_menu()
 
     # Main Game Loop
     while True:
+
         delta_time = clock.tick(FPS) / 1000.0  # Delta time in seconds
 
         for event in pygame.event.get():
@@ -466,7 +840,7 @@ def main():
         draw_enemy_bullets()
 
         # Show score and lives
-        score_text = font_arcade.render(f"HP   {boss_health}", True, BLACK)
+        score_text = font_arcade.render(f"HP {boss_health}", True, BLACK)
         screen.blit(score_text, (10, 10))
         draw_lives()
 
