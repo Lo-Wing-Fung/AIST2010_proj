@@ -67,9 +67,6 @@ heart_filled = pygame.transform.scale(heart_filled, heart_size)
 heart_empty = pygame.transform.scale(heart_empty, heart_size)
 
 
-# Load background music for home and game
-home_bg_music = "./background/home_bg.wav"
-
 # Define player
 player_size = 40
 player_pos = [WIDTH // 2, HEIGHT - player_size * 2]
@@ -77,7 +74,7 @@ player_speed = 6
 player_velocity = [0, 0]  # Velocity vector
 
 # Define boss animation frames
-boss_size = 150
+boss_size = 180
 
 
 boss_frame_index = 0
@@ -112,6 +109,7 @@ Drop = True
 
 boss_frames, player_image, home_bg, drip_bg = None, None, None, None
 theme_selected = "touhou"
+home_bg_music = f"./background/{theme_selected}_bg.wav"
 
 
 class DropDown:
@@ -197,8 +195,20 @@ def song_preprocess(default="mywar.wav", diff="Easy"):
 
     # Initialize audio analyzer
     audio_analyzer = AudioAnalyzer()
-    audio_analyzer.load(f"./music/{default}")
-    audio_analyzer.precompute(freq_groups, f"./precomputed/{default.replace('.wav', '.npy')}")
+
+    precomputed_file = f"./precomputed/{default.replace('.wav', '.npy')}"
+
+    # Check if precomputed data exists
+    if os.path.exists(precomputed_file):
+        start_time = time.time()
+        audio_analyzer.load_precomputed(precomputed_file)  # Load precomputed data
+        print("--- %s seconds ---" % (time.time() - start_time))
+    else:
+        print(f"Precomputed file not found. Computing data...")
+        start_time = time.time()
+        audio_analyzer.load(f"./music/{default}")  # Load the audio file
+        audio_analyzer.precompute(freq_groups, precomputed_file)  # Precompute and save
+        print("--- %s seconds ---" % (time.time() - start_time))
 
     game_bg_music = f"./music/{default}"
     difficulty = diff
@@ -224,7 +234,7 @@ def draw_end_page(message):
 
 
 def change_theme():
-    global boss_frames, player_image, home_bg, drip_bg
+    global boss_frames, player_image, home_bg, drip_bg, home_bg_music
 
     boss_frames = [
         pygame.transform.scale(pygame.image.load(f"./themes/{theme_selected}/{theme_selected}_boss_frame_{i}.png"), (boss_size, boss_size))
@@ -237,6 +247,15 @@ def change_theme():
     drip_bg = pygame.image.load(f"./themes/{theme_selected}/{theme_selected}_bg.png")
 
 
+    if home_bg_music != f"./background/{theme_selected}_bg.wav":
+        if pygame.mixer.music.get_busy():
+            pygame.mixer.music.stop()
+        
+        home_bg_music = f"./background/{theme_selected}_bg.wav"
+        pygame.mixer.music.load(home_bg_music)  # Load home background music
+        pygame.mixer.music.play(-1)  # Play in a loop
+
+
 def show_theme_selection():
     """Display a confirmation window to select a theme."""
     global theme_selected
@@ -247,6 +266,7 @@ def show_theme_selection():
     themes = ["mario", "touhou", "pixel", "pacman"]
     theme_images = [f"./themes/{theme}/{theme}.png" for theme in themes]  # Replace with your image paths
     theme_buttons = []
+    past_theme = theme_selected
     theme_selected = None
 
     # Load theme images
@@ -279,7 +299,8 @@ def show_theme_selection():
                     change_theme()
                     return theme_selected
                 elif return_rect.collidepoint(event.pos):
-                    return None  # Return without making changes
+                    theme_selected = past_theme
+                    return past_theme  # Return without making changes
 
         # Draw popup
         pygame.draw.rect(screen, BLACK, popup_rect)
@@ -438,6 +459,7 @@ def show_start_confirmation():
 
 def upload_preprocessing(file_name):
     global visualizer, audio_analyzer
+    visualizer, audio_analyzer = None, None
 
     base = os.path.basename(file_name)
     shutil.copyfile(file_name, f"./music/{base}")
@@ -448,8 +470,20 @@ def upload_preprocessing(file_name):
 
     # Initialize audio analyzer
     audio_analyzer = AudioAnalyzer()
-    audio_analyzer.load(f"./music/{base}")
-    audio_analyzer.precompute(freq_groups, output_file=f"./precomputed/{(base.split('.'))[0]}.npy")
+    precomputed_file = f"./precomputed/{base.replace('.wav', '.npy')}"
+
+    # Check if precomputed data exists
+    if os.path.exists(precomputed_file):
+        start_time = time.time()
+        audio_analyzer.load_precomputed(precomputed_file)  # Load precomputed data
+        print("--- %s seconds ---" % (time.time() - start_time))
+    else:
+        print(f"Precomputed file not found. Computing data...")
+        start_time = time.time()
+        audio_analyzer.load(f"./music/{base}")  # Load the audio file
+        audio_analyzer.precompute(freq_groups, precomputed_file)  # Precompute and save
+        print("--- %s seconds ---" % (time.time() - start_time))
+
     print("preprocessed.")
 
 

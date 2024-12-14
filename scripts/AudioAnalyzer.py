@@ -5,6 +5,7 @@ import librosa.display
 import numpy as np
 
 import pygame
+import os
 
 def rotate(xy, theta):
 
@@ -39,6 +40,18 @@ class AudioAnalyzer:
         self.frequencies_index_ratio = 0  # array for frequencies
         self.time_index_ratio = 0  # array of time periods
         self.spectrogram = None  # a matrix that contains decibel values according to frequency and time indexes
+        self.precomputed_data = None  # Precomputed decibel data
+
+    def load_precomputed(self, precomputed_file):
+        """
+        Load precomputed decibel values from a file.
+        """
+        if os.path.exists(precomputed_file):
+            self.precomputed_data = np.load(precomputed_file)
+            print(f"Precomputed data loaded from {precomputed_file}")
+        else:
+            raise FileNotFoundError(f"Precomputed file not found: {precomputed_file}")
+        
 
     def load(self, filename):
 
